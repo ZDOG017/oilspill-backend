@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -16,10 +17,14 @@ from app.schemas import (
     GeoJSONFeatureCollection,
     Geometry,
     PaginatedEventsResponse,
+    PredictionDetection,
+    PredictionResponse,
 )
 
 
 DATA_FILE = Path(__file__).parent / "data" / "seed_events.geojson"
+MODEL_FILE = Path(__file__).parent / "models" / "dartis_yolov8s_768_best.pt"
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
 class DataFileError(RuntimeError):
@@ -27,6 +32,14 @@ class DataFileError(RuntimeError):
 
 
 class EventNotFoundError(LookupError):
+    pass
+
+
+class ModelFileError(RuntimeError):
+    pass
+
+
+class InferenceDependencyError(RuntimeError):
     pass
 
 
@@ -180,6 +193,46 @@ class EventService:
             )
         ]
 
+    def predict_from_image(self, *, filename: str, image_bytes: bytes) -> PredictionResponse:
+        image = _open_image(image_bytes)
+        image_width, image_height = image.size
+        model = _load_yolo_model()
+        results = model.predict(image, verbose=False)
+
+        detections: list[PredictionDetection] = []
+        for result in results:
+            boxes = getattr(result, "boxes", None)
+            names = getattr(result, "names", {})
+            if boxes is None:
+                continue
+
+            xyxy_values = boxes.xyxy.tolist()
+            confidence_values = boxes.conf.tolist()
+            class_values = boxes.cls.tolist()
+
+            for xyxy, confidence, class_id in zip(xyxy_values, confidence_values, class_values):
+                class_name = names.get(int(class_id), str(int(class_id)))
+                detections.append(
+                    PredictionDetection(
+                        class_name=str(class_name),
+                        confidence=round(float(confidence), 6),
+                        bbox_pixels=[round(float(value), 2) for value in xyxy],
+                    )
+                )
+
+        detections_count = len(detections)
+        return PredictionResponse(
+            filename=filename,
+            image_width=image_width,
+            image_height=image_height,
+            detections_count=detections_count,
+            detections=detections,
+            status="candidate_detected" if detections_count > 0 else "no_candidate_detected",
+            note="AI-generated candidate detections; not manually verified.",
+            map_ready=False,
+            map_ready_reason="Uploaded image does not include geospatial metadata.",
+        )
+
 
 @lru_cache(maxsize=1)
 def _read_geojson_file() -> dict[str, Any]:
@@ -200,6 +253,42 @@ def _read_geojson_file() -> dict[str, Any]:
         raise DataFileError("GeoJSON data file must contain a FeatureCollection.")
 
     return payload
+
+
+@lru_cache(maxsize=1)
+def _load_yolo_model():
+    if not MODEL_FILE.exists():
+        raise ModelFileError(
+            f"YOLO model file not found at '{MODEL_FILE}'. Place dartis_yolov8s_768_best.pt in app/models and try again."
+        )
+
+    try:
+        from ultralytics import YOLO
+    except ImportError as exc:
+        raise InferenceDependencyError(
+            "Inference dependencies are not installed. Run 'pip install -r requirements.txt' and try again."
+        ) from exc
+
+    try:
+        return YOLO(str(MODEL_FILE))
+    except Exception as exc:
+        raise ModelFileError(f"Unable to load YOLO model file: {exc}") from exc
+
+
+def _open_image(image_bytes: bytes):
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except ImportError as exc:
+        raise InferenceDependencyError(
+            "Inference dependencies are not installed. Run 'pip install -r requirements.txt' and try again."
+        ) from exc
+
+    try:
+        image = Image.open(BytesIO(image_bytes))
+        image.load()
+        return image
+    except UnidentifiedImageError as exc:
+        raise ValueError("Uploaded file is not a valid image.") from exc
 
 
 def _matches_filters(

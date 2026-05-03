@@ -6,6 +6,8 @@ The detections in this API are candidate events produced by an AI pipeline. They
 
 The backend reads detection features from `app/data/seed_events.geojson`. Each feature is expected to be a GeoJSON `Polygon` with properties such as `event_id`, `confidence`, `estimated_area_km2`, `status`, and time metadata.
 
+The backend can also run optional upload inference on normal image files through `POST /predict`. This is useful for detection preview, but uploaded images are not map-ready because they do not include geospatial metadata.
+
 This version intentionally keeps the stack lightweight and file-based. A database and PostGIS can be added in the next version when the prototype grows beyond a single GeoJSON source.
 
 ## Project Structure
@@ -14,6 +16,8 @@ This version intentionally keeps the stack lightweight and file-based. A databas
 oilspill-backend/
 ├── app/
 │   ├── __init__.py
+│   ├── models/
+│   │   └── dartis_yolov8s_768_best.pt
 │   ├── main.py
 │   ├── schemas.py
 │   ├── services.py
@@ -30,6 +34,7 @@ oilspill-backend/
 - `GET /events/{event_id}` to fetch one detection event
 - `GET /events/stats` to compute summary statistics
 - `GET /events.geojson` to return the filtered GeoJSON `FeatureCollection`
+- `POST /predict` to run preview inference on an uploaded image
 - CORS enabled for frontend integration
 - Basic error handling for missing data file, invalid JSON, and unknown event IDs
 
@@ -58,13 +63,19 @@ pip install -r requirements.txt
 app/data/seed_events.geojson
 ```
 
-4. Start the development server:
+4. For upload inference, place your trained YOLO model file at:
+
+```text
+app/models/dartis_yolov8s_768_best.pt
+```
+
+5. Start the development server:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-5. Open the API docs:
+6. Open the API docs:
 
 ```text
 http://127.0.0.1:8000/docs
@@ -187,6 +198,44 @@ Example queries:
 /events.geojson?min_confidence=0.7&max_area=100&status=candidate_detection
 ```
 
+### `POST /predict`
+
+Accepts a `jpg`, `jpeg`, or `png` upload using `multipart/form-data`, runs YOLO inference, and returns candidate detections in image pixel coordinates.
+
+Returned fields include:
+
+- `filename`
+- `image_width`
+- `image_height`
+- `detections_count`
+- `detections`
+- `status`
+- `note`
+- `map_ready`
+- `map_ready_reason`
+
+Example response structure:
+
+```json
+{
+  "filename": "preview.png",
+  "image_width": 768,
+  "image_height": 768,
+  "detections_count": 1,
+  "detections": [
+    {
+      "class_name": "oil",
+      "confidence": 0.862,
+      "bbox_pixels": [256.03, 305.41, 301.73, 408.69]
+    }
+  ],
+  "status": "candidate_detected",
+  "note": "AI-generated candidate detections; not manually verified.",
+  "map_ready": false,
+  "map_ready_reason": "Uploaded image does not include geospatial metadata."
+}
+```
+
 ## Example curl Commands
 
 ```bash
@@ -221,6 +270,11 @@ curl "http://127.0.0.1:8000/events.geojson?min_confidence=0.7"
 curl http://127.0.0.1:8000/events/oc-0002_0
 ```
 
+```bash
+curl -X POST "http://127.0.0.1:8000/predict" \
+  -F "file=@/absolute/path/to/image.png"
+```
+
 ## Testing Notes
 
 The current repository data file at `app/data/seed_events.geojson` contains the real exported detections from your pipeline.
@@ -235,6 +289,7 @@ Observed local behavior with the current dataset:
 - `GET /events.geojson` returns all 425 features without pagination
 - `GET /events.geojson?min_confidence=0.7` returns a `FeatureCollection` with 218 filtered features
 - `GET /events/oc-0002_0` returns the matching event with polygon geometry
+- `POST /predict` returns image-space detection previews when the local model file is available
 
 ## Current Limitations
 
@@ -242,9 +297,12 @@ Observed local behavior with the current dataset:
 - Detections are AI-generated candidate results and still need expert or manual verification.
 - Very large polygons may require additional quality control in later versions.
 - PostGIS can be added in the next version for scalable geospatial querying.
+- Upload inference is useful for preview only; map placement will require geospatial metadata or GeoTIFF support in a future version.
 
 ## Error Handling Notes
 
 - If `app/data/seed_events.geojson` is missing, data endpoints return a `500` response with a clear message.
 - If an `event_id` does not exist, `GET /events/{event_id}` returns `404`.
+- If the uploaded file is not a `jpg`, `jpeg`, or `png`, `POST /predict` returns `400`.
+- If the YOLO model file is missing, `POST /predict` returns a clear `500` error explaining where to place it.
 - If query parameters are invalid, FastAPI returns a validation error response.

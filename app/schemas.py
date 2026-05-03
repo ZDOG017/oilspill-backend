@@ -69,3 +69,21 @@ class EventStats(BaseModel):
     min_estimated_area_km2: float
     max_estimated_area_km2: float
     total_estimated_area_km2: float
+
+
+class PredictionDetection(BaseModel):
+    class_name: str
+    confidence: float
+    bbox_pixels: list[float]
+
+
+class PredictionResponse(BaseModel):
+    filename: str
+    image_width: int
+    image_height: int
+    detections_count: int
+    detections: list[PredictionDetection] = Field(default_factory=list)
+    status: str
+    note: str
+    map_ready: bool = False
+    map_ready_reason: str

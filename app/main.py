@@ -1,11 +1,25 @@
 from datetime import date
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.schemas import EventDetail, EventStats, GeoJSONFeatureCollection, HealthResponse, PaginatedEventsResponse
-from app.services import DataFileError, EventNotFoundError, EventService
+from app.schemas import (
+    EventDetail,
+    EventStats,
+    GeoJSONFeatureCollection,
+    HealthResponse,
+    PaginatedEventsResponse,
+    PredictionResponse,
+)
+from app.services import (
+    DataFileError,
+    EventNotFoundError,
+    EventService,
+    InferenceDependencyError,
+    ModelFileError,
+    SUPPORTED_IMAGE_EXTENSIONS,
+)
 
 
 app = FastAPI(
@@ -27,6 +41,16 @@ event_service = EventService()
 
 @app.exception_handler(DataFileError)
 async def data_file_error_handler(_, exc: DataFileError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+@app.exception_handler(ModelFileError)
+async def model_file_error_handler(_, exc: ModelFileError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+@app.exception_handler(InferenceDependencyError)
+async def inference_dependency_error_handler(_, exc: InferenceDependencyError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
@@ -100,3 +124,25 @@ def get_events_geojson(
         max_area=max_area,
         status=status,
     )
+
+
+@app.post("/predict", response_model=PredictionResponse)
+async def predict(file: UploadFile = File(...)) -> PredictionResponse:
+    extension = _get_file_extension(file.filename)
+    if extension not in SUPPORTED_IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported file type. Only jpg, jpeg, and png are allowed.")
+
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        return event_service.predict_from_image(filename=file.filename or "uploaded-image", image_bytes=image_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _get_file_extension(filename: str | None) -> str:
+    if not filename or "." not in filename:
+        return ""
+    return f".{filename.rsplit('.', 1)[-1].lower()}"
