@@ -167,6 +167,19 @@ curl "http://127.0.0.1:8000/events/stats?min_area=1.0&max_area=20"
 curl "http://127.0.0.1:8000/events.geojson?min_confidence=0.7&status=candidate"
 ```
 
+## Testing Notes
+
+The current repository data file at `app/data/seed_events.geojson` contains the real exported detections from your pipeline.
+
+Observed local behavior with the current dataset:
+
+- `GET /health` returns `{"status":"ok"}`
+- `GET /events` returns 425 event records
+- `GET /events?min_confidence=0.8` returns 121 records
+- `GET /events/stats` returns aggregate metrics across all 425 detections
+- `GET /events.geojson?min_confidence=0.7` returns a `FeatureCollection` with 218 filtered features
+- `GET /events/oc-0002_0` returns the matching event with polygon geometry
+
 ## Error Handling Notes
 
 - If `app/data/seed_events.geojson` is missing, data endpoints return a `500` response with a clear message.
