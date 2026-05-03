@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.schemas import EventDetail, EventListItem, EventStats, GeoJSONFeatureCollection, HealthResponse
+from app.schemas import EventDetail, EventStats, GeoJSONFeatureCollection, HealthResponse, PaginatedEventsResponse
 from app.services import DataFileError, EventNotFoundError, EventService
 
 
@@ -35,7 +35,7 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.get("/events", response_model=list[EventListItem])
+@app.get("/events", response_model=PaginatedEventsResponse)
 def list_events(
     min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
     max_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
@@ -44,7 +44,9 @@ def list_events(
     status: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
-) -> list[EventListItem]:
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> PaginatedEventsResponse:
     return event_service.list_events(
         min_confidence=min_confidence,
         max_confidence=max_confidence,
@@ -53,6 +55,8 @@ def list_events(
         status=status,
         start_date=start_date,
         end_date=end_date,
+        limit=limit,
+        offset=offset,
     )
 
 

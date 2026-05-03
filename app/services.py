@@ -8,7 +8,15 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from app.schemas import EventDetail, EventListItem, EventStats, GeoJSONFeature, GeoJSONFeatureCollection, Geometry
+from app.schemas import (
+    EventDetail,
+    EventListItem,
+    EventStats,
+    GeoJSONFeature,
+    GeoJSONFeatureCollection,
+    Geometry,
+    PaginatedEventsResponse,
+)
 
 
 DATA_FILE = Path(__file__).parent / "data" / "seed_events.geojson"
@@ -55,7 +63,9 @@ class EventService:
         status: str | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
-    ) -> list[EventListItem]:
+        limit: int = 50,
+        offset: int = 0,
+    ) -> PaginatedEventsResponse:
         records = self._filter_records(
             min_confidence=min_confidence,
             max_confidence=max_confidence,
@@ -65,7 +75,15 @@ class EventService:
             start_date=start_date,
             end_date=end_date,
         )
-        return [EventListItem(**record.properties) for record in records]
+        paginated_records = records[offset : offset + limit]
+        events = [EventListItem(**record.properties) for record in paginated_records]
+        return PaginatedEventsResponse(
+            total_count=len(records),
+            returned_count=len(events),
+            limit=limit,
+            offset=offset,
+            events=events,
+        )
 
     def get_event_by_id(self, event_id: str) -> EventDetail:
         for record in self._load_records():

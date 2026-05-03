@@ -32,6 +32,14 @@ class EventListItem(EventBase):
     pass
 
 
+class PaginatedEventsResponse(BaseModel):
+    total_count: int
+    returned_count: int
+    limit: int
+    offset: int
+    events: list[EventListItem] = Field(default_factory=list)
+
+
 class Geometry(BaseModel):
     type: str
     coordinates: list[Any]
